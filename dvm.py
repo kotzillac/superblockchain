@@ -7,7 +7,7 @@ icf = cf('u8u4u4u16')
 
 type Key = bytes
 type Value = bytes
-type Result = bytes
+type Result = int
 type Gas = int
 
 class Instruction(NamedTuple):
@@ -15,6 +15,10 @@ class Instruction(NamedTuple):
     first_register: int
     second_register: int
     constant_num: int
+
+class EditBC(NamedTuple):
+    key: Key
+    value: Value
 
 def execute(code: bytes, codemap: dict[bytes, int], gas: int, readbc: Callable[[Key], Result], writebc: Callable[[Key, Value], None]) -> tuple[Result | None, Gas]:
     codestart = codemap.get(0x00)
@@ -37,7 +41,9 @@ def execute(code: bytes, codemap: dict[bytes, int], gas: int, readbc: Callable[[
         offset += 4
 
     # finally, execution
+    editlist: list[EditBC] = [] 
     registers: list[int] = [0] * 16
+    stack: list[int] = [0] * 32768 # 1MB stack, a lot of 256 bits.
     cmptrue: bool = False
     gas = gas
     pc = 0
@@ -105,7 +111,47 @@ def execute(code: bytes, codemap: dict[bytes, int], gas: int, readbc: Callable[[
                     cmptrue = (registers[dest] > consts[const])
                 else:
                     cmptrue = (registers[dest] > registers[src])
-            case 10: # 
+            case 10: # LOAD
+                gas -= 3
+                if gas <= 0: return (None, gas)
+                if dest == 0 or dest >= 12: return (None, gas)
+                if src < 0 or src >= 32768: return (None, gas)
+                registers[dest] = stack[src]
+            case 11: # STORE
+                gas -= 3
+                if gas <= 0: return (None, gas)
+                if src < 0 or src >= 32768: return (None, gas)
+                stack[src] = registers[dest]
+            case 12: #JE
+                gas -= 1
+                if gas <= 0: return (None, gas)
+                if cmptrue:
+                    pc = const
+                    cmptrue = False
+            case 13: #JNE
+                gas -= 1
+                if gas <= 0: return (None, gas)
+                if not cmptrue:
+                    pc = const
+                    cmptrue = False
+            case 14: # SSTORE
+                gas -= 15000
+                if gas <= 0: return (None, gas)
+                editlist.append(EditBC(dest, src))
+            case 15: # SSLOAD
+                gas -= 500
+                if gas <= 0: return (None, gas)
+                if dest == 0 or dest >= 12: return (None, gas)
+                x = 0
+                for k, v in editlist[::-1]:
+                    if k == registers[src]:
+                        registers[dest] = v
+                        x = v
+                if x == 0:
+                    registers[dest] = readbc(registers[src])
+
+                
+                
                 
 
 execute(b"1234567812345678123456781234567823456781234567812345678123456781dshagdjhsadgasjhdgashddsfsdfdsfsdf", {0x00: 64}, None, None)
