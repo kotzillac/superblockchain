@@ -45,7 +45,6 @@ def execute(code: bytes, codemap: dict[bytes, int], gas: int, readbc: Callable[[
     registers: list[int] = [0] * 16
     stack: list[int] = [0] * 32768 # 1MB stack, a lot of 256 bits.
     cmptrue: bool = False
-    gas = gas
     pc = 0
     limit = len(bytecode)
 
@@ -138,7 +137,7 @@ def execute(code: bytes, codemap: dict[bytes, int], gas: int, readbc: Callable[[
                 gas -= 15000
                 if gas <= 0: return (None, gas)
                 editlist.append(EditBC(dest, src))
-            case 15: # SSLOAD
+            case 15: # SLOAD
                 gas -= 500
                 if gas <= 0: return (None, gas)
                 if dest == 0 or dest >= 12: return (None, gas)
@@ -149,9 +148,3 @@ def execute(code: bytes, codemap: dict[bytes, int], gas: int, readbc: Callable[[
                         x = v
                 if x == 0:
                     registers[dest] = readbc(registers[src])
-
-                
-                
-                
-
-execute(b"1234567812345678123456781234567823456781234567812345678123456781dshagdjhsadgasjhdgashddsfsdfdsfsdf", {0x00: 64}, None, None)
