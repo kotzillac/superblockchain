@@ -58,6 +58,7 @@ def execute(code: bytes, codemap: dict[bytes, int], gas: int, readbc: Callable[[
     editlist: list[EditBC] = [] 
     registers: list[int] = [0] * 16
     stack: list[int] = [0] * 32768 # 1MB stack, a lot of 256 bits.
+    sp: int = 0 # first free stack slot
     cmptrue: bool = False
     pc = 0
     limit = len(bytecode)
@@ -128,13 +129,16 @@ def execute(code: bytes, codemap: dict[bytes, int], gas: int, readbc: Callable[[
                 gas -= 3
                 if gas <= 0: return (None, gas)
                 if dest == 0 or dest >= 12: return (None, gas)
-                if src < 0 or src >= 32768: return (None, gas)
-                registers[dest] = stack[src]
+                address = registers[src] + const # base register + 16-bit offset
+                if address < 0 or address >= len(stack): return (None, gas)
+                registers[dest] = stack[address]
             case 11: # STORE
                 gas -= 3
                 if gas <= 0: return (None, gas)
-                if src < 0 or src >= 32768: return (None, gas)
-                stack[src] = registers[dest]
+                if dest == 0 or dest >= 12: return (None, gas)
+                address = registers[src] + const
+                if address < 0 or address >= len(stack): return (None, gas)
+                stack[address] = registers[dest]
             case 12: #JE
                 gas -= 1
                 if gas <= 0: return (None, gas)
@@ -162,3 +166,23 @@ def execute(code: bytes, codemap: dict[bytes, int], gas: int, readbc: Callable[[
                         x = v
                 if x == 0:
                     registers[dest] = readbc(registers[src])
+            case 16: # PUSH
+                gas -= 1
+                if gas <= 0: return (None, gas)
+                if sp >= len(stack): return (None, gas)
+                if src != 0:
+                    value = registers[src]
+                elif dest != 0:
+                    value = registers[dest]
+                else:
+                    value = const
+                stack[sp] = value
+                sp += 1
+            case 17: # POP
+                gas -= 1
+                if gas <= 0: return (None, gas)
+                if sp <= 0: return (None, gas)
+                target = dest if dest != 0 else src
+                if target == 0 or target >= 12: return (None, gas)
+                sp -= 1
+                registers[target] = stack[sp]
