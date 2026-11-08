@@ -1,0 +1,12 @@
+root: 66
+Traceback (most recent call last):
+  File "C:\Users\Kirill\superblockchain\pdfextract.py", line 168, in <module>
+    walk(root_id)
+  File "C:\Users\Kirill\superblockchain\pdfextract.py", line 156, in walk
+    body = get_body(oid)
+           ^^^^^^^^^^^^^
+  File "C:\Users\Kirill\superblockchain\pdfextract.py", line 134, in get_body
+    off = pairs[oid]
+          ~~~~~^^^^^
+KeyError: 66
+pages: []

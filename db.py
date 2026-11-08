@@ -27,7 +27,11 @@ cursor.execute("""
 CREATE TABLE IF NOT EXISTS storage (
     key BLOB PRIMARY KEY,
     value BLOB NOT NULL
-)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS blocks (
+    height INTEGER PRIMARY KEY,
+    data BLOB NOT NULL
+);
 """)
 
 conn.commit()
@@ -54,3 +58,9 @@ def writebc(key: bytes | int, value: bytes | int) -> None:
         (_encode(key), _encode(value)),
     )
     conn.commit()
+
+def writeblock(height: int, data: bytes) -> None:
+    cursor.execute("INSERT INTO blocks (height, data) VALUES (?, ?)", (height, data))
+
+def readblock(height: int) -> bytes:
+    
