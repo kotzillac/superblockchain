@@ -76,7 +76,7 @@ class P2PManager(ServiceAPI):
         )
         
         # Start the pubsub service
-        await _pubsub.start()
+        await _pubsub.run()
         
         # Subscribe to topics
         await _pubsub.subscribe(TX_TOPIC)

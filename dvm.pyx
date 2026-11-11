@@ -2,15 +2,12 @@
 # boundscheck: false
 from collections.abc import Callable
 from libc.stdint cimport int32_t, uint32_t, int8_t, uint8_t
-from libc.string cimport memset
 
-type Key = bytes
-type Value = bytes
 type Result = int
 type Gas = int
 
-# VM memory: 524288 words * 4 bytes = 2 MiB of addressable byte space.
-cdef int32_t MEM_WORDS = 524288
+# VM memory: 1048576 words * 4 bytes = 4 MiB of addressable byte space.
+cdef int32_t MEM_WORDS = 1048576
 cdef int32_t MEM_BYTES = MEM_WORDS * 4
 
 # ---------------------------------------------------------------------------
@@ -74,11 +71,9 @@ cdef inline void mem_write(int32_t[::1] mem, int32_t addr, int32_t value, int32_
 # ---------------------------------------------------------------------------
 # Interpreter
 # ---------------------------------------------------------------------------
-def execute(code: bytes, gas: int, readbc: Callable[[Key], Result], writebc: Callable[[Key, Value], None]) -> tuple[Result | None, Gas]:
-    cdef int32_t[524288] memory
-    memset(&memory[0], 0, sizeof(memory))
-    cdef int32_t[32] registers
-    memset(&registers[0], 0, sizeof(registers))
+def execute(code: bytes, gas: int, systemcall: Callable([int, int, int, bytes], (bytes, int)|(None, int))) -> tuple[Result | None, Gas]:
+    cdef int32_t[1048576] memory = [0]
+    cdef int32_t[32] registers = [0]
 
     cdef int8_t[:] bc = code
 
@@ -96,16 +91,9 @@ def execute(code: bytes, gas: int, readbc: Callable[[Key], Result], writebc: Cal
         opcode = instraw & 0x7f
         next_pc = <int32_t>pc + 4                 # default: sequential
 
-        # Gas table: add/sub/xor/or/and/sll/srl and all others cost 1 gas,
-        # except loads/stores: lb=4, lh=4, lw=3, lbu=3, lhu=3, sb=4, sh=4, sw=3.
         funct3 = (instraw >> 12) & 0x7
-        if opcode == 0b0000011 or opcode == 0b0100011:   # LOAD / STORE
-            if funct3 == 0b000 or funct3 == 0b001:
-                gas -= 4                                  # lb / lh / sb / sh
-            else:
-                gas -= 3                                  # lw / lbu / lhu / sw
-        else:
-            gas -= 1                                      # everything else
+        
+        gas -= 2
         if gas < 0:
             break                                         # out of gas -> stop
 
@@ -288,7 +276,16 @@ def execute(code: bytes, gas: int, readbc: Callable[[Key], Result], writebc: Cal
             pass
 
         elif opcode == 0b1110011:            # SYSTEM : ECALL
-            if imm 
+            if imm == 0x1:
+                cdef uint32_t[64] buff
+                cdef int i
+                for i in range(0, 64, 4):
+                    buff[i / 4] = mem_read(memory, registers[14]+i, 4, 0) 
+                buf, resu = systemcall(registers[10], registers[11], registers[12], registers[13], bytes(buff))
+                if buf is not None:
+                    for i in range(0, 64, 4):
+                        mem_write(memory, registers[14] + (i/4), mem_read(buff, (i/4), 4, 0), 0)
+                registers[10] = resu
 
         else:
             break                             # illegal instruction -> stop
