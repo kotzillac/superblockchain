@@ -77,3 +77,6 @@ dmypy.json
 .history/
 .history
 .ionide
+
+# cython
+dvm.c

@@ -1,5 +1,4 @@
-# libp2pp2p.py
-# P2P networking module using libp2p-python with GossipSub and mDNS
+# SPDX-License-Identifier: GPL-3.0-or-later
 
 import json
 import logging

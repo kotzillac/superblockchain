@@ -1,5 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # cython: language_level=3
-# boundscheck: false
+# cython: boundscheck=False
 from collections.abc import Callable
 from libc.stdint cimport int32_t, uint32_t, uint64_t, uint8_t
 from libc.stddef cimport size_t
@@ -14,16 +15,7 @@ cdef uint32_t MEM_BYTES = <uint32_t>MEM_WORDS * 4
 # ---------------------------------------------------------------------------
 # Bit helpers
 # ---------------------------------------------------------------------------
-cdef inline uint32_t get_bit_slice(uint32_t value, int32_t start, int32_t end) noexcept:
-    cdef int32_t length = end - start + 1
-    if start < 0 or length <= 0 or length > 32:
-        return 0
-    if length == 32:
-        return value >> start
-    return (value >> start) & ((<uint32_t>1 << length) - 1)
-
-
-# Sign-extend the low its bits of a value without relying on signed shifts.
+# Sign-extend the low `bits` bits of a value without relying on signed shifts.
 cdef inline int32_t sext(uint32_t value, uint32_t bits) noexcept:
     cdef uint32_t sign
     if bits == 0 or bits >= 32:
@@ -55,6 +47,14 @@ cdef inline uint32_t fetch32(const uint8_t[:] bc, uint32_t pc) noexcept:
 # ---------------------------------------------------------------------------
 # Byte-addressable memory access inside the word array
 # ---------------------------------------------------------------------------
+# A size-byte access at addr is legal only when it lies fully inside the VM
+# address space; every other access must fault instead of silently succeeding.
+cdef inline bint mem_range_ok(uint32_t addr, uint32_t size) noexcept:
+    if size == 0 or size > MEM_BYTES:
+        return False
+    return addr <= MEM_BYTES - size
+
+
 cdef inline int32_t mem_read(int32_t* mem, uint32_t addr, int32_t size, int32_t do_sign) noexcept:
     cdef int32_t i
     cdef uint32_t byte_addr, idx, sh, b, val = 0
@@ -94,7 +94,7 @@ cdef inline void mem_write(int32_t* mem, uint32_t addr, uint32_t value, int32_t 
 # Interpreter
 # ---------------------------------------------------------------------------
 def execute(code: bytes, gas: int, systemcall: Callable[[int, int, int, int, bytes], tuple[bytes | None, int]]) -> tuple[int | None, int]:
-    cdef int32_t registers[32]
+    cdef int32_t[32] registers
     memset(&registers[0], 0, sizeof(registers))
 
     cdef const uint8_t[:] bc
@@ -106,11 +106,12 @@ def execute(code: bytes, gas: int, systemcall: Callable[[int, int, int, int, byt
     cdef uint32_t next_pc = 0
     cdef uint32_t addr = 0
     cdef uint32_t uimm = 0
+    cdef uint32_t access = 0
     cdef int32_t opcode, rd, rs1, rs2, funct3, funct7
     cdef int32_t imm, shamt, taken
     cdef int32_t result
 
-    cdef uint8_t buff[64]
+    cdef uint8_t[64] buff
     cdef uint32_t i
     cdef uint32_t copy_len
     cdef bytes input_bytes
@@ -129,6 +130,8 @@ def execute(code: bytes, gas: int, systemcall: Callable[[int, int, int, int, byt
             if pc == code_len:
                 normal_exit = True
                 break
+            if pc & 3:
+                break                              # misaligned instruction address -> stop
             if <uint64_t>pc + 4 > <uint64_t>code_len:
                 break                              # incomplete instruction -> stop
 
@@ -138,9 +141,9 @@ def execute(code: bytes, gas: int, systemcall: Callable[[int, int, int, int, byt
 
             funct3 = (instraw >> 12) & 0x7
 
-            gas -= 2
-            if gas < 0:
+            if gas < 2:
                 break                                         # out of gas -> stop
+            gas -= 2
 
             if opcode == 0b0110011:            # OP : R-type
                 rd     = (instraw >> 7) & 0x1f
@@ -214,6 +217,17 @@ def execute(code: bytes, gas: int, systemcall: Callable[[int, int, int, int, byt
                 rs1    = (instraw >> 15) & 0x1f
                 addr   = <uint32_t>registers[rs1] + <uint32_t>sext(instraw >> 20, 12)
 
+                if funct3 == 0b000 or funct3 == 0b100:
+                    access = 1
+                elif funct3 == 0b001 or funct3 == 0b101:
+                    access = 2
+                elif funct3 == 0b010:
+                    access = 4
+                else:
+                    break                             # illegal funct3 -> stop
+                if not mem_range_ok(addr, access):
+                    break                             # out-of-bounds load -> stop
+
                 if funct3 == 0b000:
                     result = mem_read(memory, addr, 1, 1)                        # LB
                 elif funct3 == 0b001:
@@ -237,6 +251,17 @@ def execute(code: bytes, gas: int, systemcall: Callable[[int, int, int, int, byt
                 imm    = ((instraw >> 25) << 5) | ((instraw >> 7) & 0x1f)
                 imm    = sext(<uint32_t>imm, 12)
                 addr   = <uint32_t>registers[rs1] + <uint32_t>imm
+
+                if funct3 == 0b000:
+                    access = 1
+                elif funct3 == 0b001:
+                    access = 2
+                elif funct3 == 0b010:
+                    access = 4
+                else:
+                    break                             # illegal funct3 -> stop
+                if not mem_range_ok(addr, access):
+                    break                             # out-of-bounds store -> stop
 
                 if funct3 == 0b000:
                     mem_write(memory, addr, <uint32_t>registers[rs2], 1)         # SB
@@ -269,7 +294,7 @@ def execute(code: bytes, gas: int, systemcall: Callable[[int, int, int, int, byt
                 if rd != 0:
                     registers[rd] = sext(pc + 4, 32)
                 next_pc = pc + <uint32_t>imm
-                if next_pc >= code_len:
+                if next_pc > code_len:
                     break                             # target out of range -> stop
 
             elif opcode == 0b1100111:            # JALR : I-type
@@ -280,7 +305,7 @@ def execute(code: bytes, gas: int, systemcall: Callable[[int, int, int, int, byt
                 rs1  = (instraw >> 15) & 0x1f
                 imm  = sext(instraw >> 20, 12)
                 next_pc = (<uint32_t>registers[rs1] + <uint32_t>imm) & 0xfffffffe
-                if next_pc >= code_len:
+                if next_pc > code_len:
                     break                          # target out of range -> stop
                 if rd != 0:
                     registers[rd] = sext(pc + 4, 32)
@@ -314,15 +339,18 @@ def execute(code: bytes, gas: int, systemcall: Callable[[int, int, int, int, byt
 
                 if taken:
                     next_pc = pc + <uint32_t>imm
-                    if next_pc >= code_len:
+                    if next_pc > code_len:
                         break                       # target out of range -> stop
 
-            elif opcode == 0b0001111:            # MISC-MEM : FENCE (no-op)
-                pass
+            elif opcode == 0b0001111:            # MISC-MEM : FENCE / FENCE.I
+                if funct3 > 0b001:
+                    break                          # reserved funct3 -> stop
 
             elif opcode == 0b1110011:            # SYSTEM : ECALL
                 if instraw != 0x00000073:
                     break                          # EBREAK or illegal SYSTEM
+                if not mem_range_ok(<uint32_t>registers[14], 64):
+                    break                          # syscall buffer outside VM memory -> stop
 
                 for i in range(64):
                     buff[i] = <uint8_t>mem_read(memory, <uint32_t>registers[14] + i, 1, 0)

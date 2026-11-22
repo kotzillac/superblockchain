@@ -1,4 +1,5 @@
-# p2p.py - P2P networking module for Dochacoin blockchain
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 import asyncio
 import socket
 import logging
