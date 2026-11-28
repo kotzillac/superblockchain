@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+blake3>=1.0
+rocksdict>=0.3
+numpy>=2.0
+# p2p.py (HTTP + mDNS discovery)
+fastapi>=0.110
+uvicorn>=0.29
+httpx>=0.27
+zeroconf>=0.130
+anyio>=4.0
+# build (dvm.pyx -> dvm.*.pyd)
+Cython>=3.0
+setuptools>=68
